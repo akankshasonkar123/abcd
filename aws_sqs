@@ -1,0 +1,86 @@
+<?php
+require_once('sdk-1.5.6.2/sdk.class.php');  
+$AWS_KEY = "6VVWTU4JDAAKHYB1C3ZN";
+$AWS_SECRET_KEY = "GMSCUD8C0QA1QLV9Y3RP2IAKDIZSCHRGKEJSXZ4F";
+
+//create a new SQS queue and grab the queue URL
+$sqs = new AmazonSQS(array( "key" => $AWS_KEY, "secret" => $AWS_SECRET_KEY ));
+$response = $sqs->create_queue('test-topic-queue');
+$queue_url = (string) $response->body->CreateQueueResult->QueueUrl;
+$queue_arn = 'arn:aws:sqs:us-east-1:ENCQ8gqrAcXv:test-topic-queue';
+
+//create a new SNS topic and grab the topic ARN.
+$sns = new AmazonSNS(array( "key" => $AWS_KEY, "secret" => $AWS_SECRET_KEY ));
+$response = $sns->create_topic('test-topic');
+$topic_arn = (string) $response->body->CreateTopicResult->TopicArn;
+
+//Then give the SNS topic the permission to send messages to the SQS queue. ** allow all principals. SNS doesn't send from your account ID -- it has its own account ID that it sends from.
+$queue_url = 'https://sqs.us-east-1.amazonaws.com/ENCQ8gqrAcXv/test-topic-queue';
+$queue_arn = 'arn:aws:sqs:us-east-1:ENCQ8gqrAcXv:test-topic-queue';
+$topic_arn = 'arn:aws:sns:us-east-1:ENCQ8gqrAcXv:test-topic';
+
+$policy = new CFPolicy($sqs, array(
+        'Version' => '2008-10-17',
+        'Id' => 'sampleId',
+        'Statement' => array(
+                array(
+                        'Resource' => $queue_arn,
+                        'Effect' => 'Allow',
+                        'Sid' => 'rule1',
+                        'Action' => 'sqs:*',
+                        'Condition' => array(
+                                'StringEquals' => array(
+                                        'aws:SourceArn' => $topic_arn
+                                )
+                        ),
+                        'Principal' => array(
+                                'AWS' => '*'
+                        )
+                )
+        )
+));
+
+$response = $sqs->set_queue_attributes($queue_url, array(
+        array('Name' => 'Policy', 'Value' => $policy->get_json())
+));
+
+
+//then subscribe the SQS queue to the SNS topic and grab the subscription ARN.
+$queue_arn = 'arn:aws:sqs:us-east-1:ENCQ8gqrAcXv:test-topic-queue';
+$topic_arn = 'arn:aws:sns:us-east-1:ENCQ8gqrAcXv:test-topic';
+$response = $sns->subscribe($topic_arn, 'sqs', $queue_arn);
+
+
+
+
+// normally here is where you would choose the protocol but this example sends this to SQS
+// subscribe ( $topic_arn, $protocol, $endpoint, $opt ) 
+
+
+
+
+$subscription_arn = (string) $response->body->SubscribeResult->SubscriptionArn;
+//view the list of subscriptions to verify.
+$topic_arn = 'arn:aws:sns:us-east-1:ENCQ8gqrAcXv:test-topic';
+
+$q = new CFBatchRequest(200);
+for ($i = 0; $i < 1000; $i++)
+{
+        $sns->batch($q)->publish($topic_arn, 'Hello world! ' . time());
+}
+$response = $sns->batch($q)->send();
+
+
+//receive messages from the queue.
+$queue_url = 'https://sqs.us-east-1.amazonaws.com/ENCQ8gqrAcXv/test-topic-queue';
+$response = $sqs->receive_message($queue_url, array(
+        'MaxNumberOfMessages' => 10,
+));
+print_r($response); 
+
+
+// delete SQS queue
+$queue_url = 'https://sqs.us-east-1.amazonaws.com/ENCQ8gqrAcXv/test-topic-queue'; 
+$response = $sqs->delete_queue($queue_url);
+
+?>
